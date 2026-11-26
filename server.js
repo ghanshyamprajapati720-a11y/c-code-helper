@@ -1,10 +1,9 @@
 
-// C Code Helper: small Express server that keeps the API key on the backend.
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
 
-// Tiny .env loader (no extra package needed)
+// Tiny .env loader
 try {
   fs.readFileSync(path.join(__dirname, ".env"), "utf8").split("\n").forEach((l) => {
     const m = l.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
@@ -13,7 +12,8 @@ try {
 } catch (_) {}
 
 const KEY = process.env.GEMINI_API_KEY;
-const MODEL = process.env.MODEL || "gemini-3.8-flash";
+const MODEL = process.env.MODEL || "gemini-3.7-flash";
+const FALLBACK_MODEL = process.env.FALLBACK_MODEL || "gemini-3.6-flash";
 const PORT = process.env.PORT || 3000;
 
 const STYLES = {
@@ -24,6 +24,7 @@ const STYLES = {
   optimized:
     "Write clean, efficient C code with good naming and the best common approach. After the code, mention time and space complexity in one line.",
 };
+
 const LANGS = {
   hinglish: "Explain in simple Hinglish (Hindi written in English letters). Code comments stay in simple English.",
   english: "Explain in simple English. Code comments stay in simple English.",
@@ -41,8 +42,9 @@ function systemPrompt(mode, lang) {
   ].join("\n");
 }
 
-// Very small in-memory rate limit: 12 requests per minute per IP
+// Rate limit: 12 requests per minute per IP
 const hits = new Map();
+
 function limited(ip) {
   const now = Date.now();
   const arr = (hits.get(ip) || []).filter((t) => now - t < 60000);
@@ -51,46 +53,174 @@ function limited(ip) {
   return arr.length > 12;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Gemini API with automatic retry
+async function callGemini(model, prompt) {
+  const MAX_RETRIES = 2;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const r = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-goog-api-key": KEY,
+          },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{ text: prompt.system }],
+            },
+            contents: [{
+              role: "user",
+              parts: [{ text: prompt.question }],
+            }],
+            generationConfig: {
+              maxOutputTokens: 2500,
+            },
+          }),
+        }
+      );
+
+      const data = await r.json();
+
+      if (r.ok) {
+        const parts =
+          (data.candidates &&
+            data.candidates[0] &&
+            data.candidates[0].content &&
+            data.candidates[0].content.parts) || [];
+
+        const answer = parts.map((p) => p.text || "").join("");
+
+        if (!answer) {
+          throw new Error("EMPTY_RESPONSE");
+        }
+
+        return answer;
+      }
+
+      if ([500, 502, 503, 504].includes(r.status) && attempt < MAX_RETRIES) {
+        console.log(`Model ${model} unavailable. Retry ${attempt + 1}/2`);
+        await sleep(1500 * Math.pow(2, attempt));
+        continue;
+      }
+
+      const error = new Error("GEMINI_API_ERROR");
+      error.status = r.status;
+      error.details = data;
+      throw error;
+
+    } catch (e) {
+      if (e.message === "EMPTY_RESPONSE" || e.status) {
+        throw e;
+      }
+
+      if (attempt < MAX_RETRIES) {
+        console.log(`Network error. Retry ${attempt + 1}/2`);
+        await sleep(1500 * Math.pow(2, attempt));
+        continue;
+      }
+
+      throw e;
+    }
+  }
+}
+
 const app = express();
+
 app.use(express.json({ limit: "20kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.post("/api/solve", async (req, res) => {
-  if (!KEY) return res.status(500).json({ error: "Server me GEMINI_API_KEY set nahi hai." });
-  if (limited(req.ip)) return res.status(429).json({ error: "Thoda ruko, bahut zyada requests." });
+  if (!KEY) {
+    return res.status(500).json({
+      error: "Server me GEMINI_API_KEY set nahi hai.",
+    });
+  }
+
+  if (limited(req.ip)) {
+    return res.status(429).json({
+      error: "Thoda ruko, bahut zyada requests.",
+    });
+  }
 
   const { question, mode, lang } = req.body || {};
-  if (typeof question !== "string" || question.trim().length < 3 || question.length > 4000)
-    return res.status(400).json({ error: "Question 3 se 4000 characters ke beech hona chahiye." });
+
+  if (
+    typeof question !== "string" ||
+    question.trim().length < 3 ||
+    question.length > 4000
+  ) {
+    return res.status(400).json({
+      error: "Question 3 se 4000 characters ke beech hona chahiye.",
+    });
+  }
+
+  const prompt = {
+    system: systemPrompt(mode, lang),
+    question: question.trim(),
+  };
 
   try {
-    const r = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": KEY },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt(mode, lang) }] },
-          contents: [{ role: "user", parts: [{ text: question.trim() }] }],
-          generationConfig: { maxOutputTokens: 2500 },
-        }),
+    let answer;
+
+    try {
+      console.log("Trying primary model:", MODEL);
+      answer = await callGemini(MODEL, prompt);
+
+    } catch (primaryError) {
+      console.error(
+        "Primary model failed:",
+        primaryError.status || primaryError.message
+      );
+
+      // Fallback for temporary errors and rate limits
+      if (
+        primaryError.status &&
+        ![429, 500, 502, 503, 504].includes(primaryError.status)
+      ) {
+        throw primaryError;
       }
-    );
-    const data = await r.json();
-    if (!r.ok) {
-      console.error("API error:", JSON.stringify(data));
-      const msg = r.status === 429 ? "Free limit khatam ho gayi, thodi der baad try karo." : "AI service se error aaya. Dobara try karo.";
-      return res.status(502).json({ error: msg });
+
+      if (MODEL === FALLBACK_MODEL) {
+        throw primaryError;
+      }
+
+      console.log("Switching to backup model:", FALLBACK_MODEL);
+
+      answer = await callGemini(FALLBACK_MODEL, prompt);
     }
-    const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
-    const text = parts.map((p) => p.text || "").join("");
-    if (!text) return res.status(502).json({ error: "Khaali jawab aaya. Question thoda badal ke try karo." });
-    res.json({ answer: text });
+
+    return res.json({ answer });
+
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error. Dobara try karo." });
+    console.error("API error:", e.details || e.message);
+
+    if (e.status === 429) {
+      return res.status(429).json({
+        error: "Free limit khatam ho gayi, thodi der baad try karo.",
+      });
+    }
+
+    if ([400, 403, 404].includes(e.status)) {
+      return res.status(502).json({
+        error: "Model ya API configuration me problem hai. Server logs check karo.",
+      });
+    }
+
+    return res.status(502).json({
+      error: "Dono Gemini models abhi unavailable hain. Thodi der baad try karo.",
+    });
   }
 });
 
-app.listen(PORT, () => console.log("C Code Helper running on http://localhost:" + PORT));
+app.listen(PORT, () => {
+  console.log("C Code Helper running on port " + PORT);
+});
+
 
