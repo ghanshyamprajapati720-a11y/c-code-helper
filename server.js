@@ -11,8 +11,8 @@ try {
   });
 } catch (_) {}
 
-const KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = process.env.MODEL || "claude-sonnet-5-5";
+const KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.MODEL || "gemini-2.5-flash";
 const PORT = process.env.PORT || 3000;
 
 const STYLES = {
@@ -55,7 +55,7 @@ app.use(express.json({ limit: "20kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.post("/api/solve", async (req, res) => {
-  if (!KEY) return res.status(500).json({ error: "Server me ANTHROPIC_API_KEY set nahi hai." });
+  if (!KEY) return res.status(500).json({ error: "Server me GEMINI_API_KEY set nahi hai." });
   if (limited(req.ip)) return res.status(429).json({ error: "Thoda ruko, bahut zyada requests." });
 
   const { question, mode, lang } = req.body || {};
@@ -63,26 +63,27 @@ app.post("/api/solve", async (req, res) => {
     return res.status(400).json({ error: "Question 3 se 4000 characters ke beech hona chahiye." });
 
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 2000,
-        system: systemPrompt(mode, lang),
-        messages: [{ role: "user", content: question.trim() }],
-      }),
-    });
+    const r = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt(mode, lang) }] },
+          contents: [{ role: "user", parts: [{ text: question.trim() }] }],
+          generationConfig: { maxOutputTokens: 2500 },
+        }),
+      }
+    );
     const data = await r.json();
     if (!r.ok) {
-      console.error("API error:", data);
-      return res.status(502).json({ error: "AI service se error aaya. Dobara try karo." });
+      console.error("API error:", JSON.stringify(data));
+      const msg = r.status === 429 ? "Free limit khatam ho gayi, thodi der baad try karo." : "AI service se error aaya. Dobara try karo.";
+      return res.status(502).json({ error: msg });
     }
-    const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+    const text = parts.map((p) => p.text || "").join("");
+    if (!text) return res.status(502).json({ error: "Khaali jawab aaya. Question thoda badal ke try karo." });
     res.json({ answer: text });
   } catch (e) {
     console.error(e);
