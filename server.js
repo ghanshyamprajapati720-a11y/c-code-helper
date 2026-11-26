@@ -1,3 +1,4 @@
+
 // C Code Helper: small Express server that keeps the API key on the backend.
 const express = require("express");
 const fs = require("fs");
@@ -12,7 +13,7 @@ try {
 } catch (_) {}
 
 const KEY = process.env.GEMINI_API_KEY;
-const MODEL = process.env.MODEL || "gemini-2.5-flash";
+const MODEL = process.env.MODEL || "gemini-3.8-flash";
 const PORT = process.env.PORT || 3000;
 
 const STYLES = {
@@ -92,3 +93,4 @@ app.post("/api/solve", async (req, res) => {
 });
 
 app.listen(PORT, () => console.log("C Code Helper running on http://localhost:" + PORT));
+
