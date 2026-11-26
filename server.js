@@ -5,26 +5,15 @@ const path = require("path");
 
 // Tiny .env loader (no extra package needed)
 try {
-  const envPath = path.join(__dirname, ".env");
-  fs.readFileSync(envPath, "utf8")
-    .split(/\r?\n/)
-    .forEach((line) => {
-      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-      if (!match) return;
-      const key = match[1];
-      let val = match[2].trim();
-      if (
-        (val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))
-      ) {
-        val = val.slice(1, -1);
-      }
-      if (!process.env[key]) process.env[key] = val;
-    });
+  fs.readFileSync(path.join(__dirname, ".env"), "utf8").split("\n").forEach((l) => {
+    const m = l.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+  });
 } catch (_) {}
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
-const PORT = Number(process.env.PORT) || 3000;
+const KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.MODEL || "gemini-2.5-flash";
+const PORT = process.env.PORT || 3000;
 
 const STYLES = {
   student:
@@ -34,13 +23,10 @@ const STYLES = {
   optimized:
     "Write clean, efficient C code with good naming and the best common approach. After the code, mention time and space complexity in one line.",
 };
-
 const LANGS = {
-  hinglish:
-    "Explain in simple Hinglish (Hindi written in English letters). Code comments stay in simple English.",
+  hinglish: "Explain in simple Hinglish (Hindi written in English letters). Code comments stay in simple English.",
   english: "Explain in simple English. Code comments stay in simple English.",
-  hindi:
-    "Explain in simple Hindi (Devanagari). Code comments stay in simple English.",
+  hindi: "Explain in simple Hindi (Devanagari). Code comments stay in simple English.",
 };
 
 function systemPrompt(mode, lang) {
@@ -69,64 +55,38 @@ app.use(express.json({ limit: "20kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.post("/api/solve", async (req, res) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const model = (process.env.MODEL || DEFAULT_MODEL).trim();
-
-  if (!apiKey) {
-    return res.status(500).json({ error: "Server me GEMINI_API_KEY set nahi hai." });
-  }
-  if (limited(req.ip)) {
-    return res.status(429).json({ error: "Thoda ruko, bahut zyada requests." });
-  }
+  if (!KEY) return res.status(500).json({ error: "Server me GEMINI_API_KEY set nahi hai." });
+  if (limited(req.ip)) return res.status(429).json({ error: "Thoda ruko, bahut zyada requests." });
 
   const { question, mode, lang } = req.body || {};
-  if (typeof question !== "string" || question.trim().length < 3 || question.length > 4000) {
+  if (typeof question !== "string" || question.trim().length < 3 || question.length > 4000)
     return res.status(400).json({ error: "Question 3 se 4000 characters ke beech hona chahiye." });
-  }
 
   try {
-    const endpoint =
-      "[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)" +
-      encodeURIComponent(model) +
-      ":generateContent";
-
-    const r = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt(mode, lang) }] },
-        contents: [{ role: "user", parts: [{ text: question.trim() }] }],
-        generationConfig: { maxOutputTokens: 2500 },
-      }),
-    });
-
-    const data = await r.json().catch(() => ({}));
+    const r = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt(mode, lang) }] },
+          contents: [{ role: "user", parts: [{ text: question.trim() }] }],
+          generationConfig: { maxOutputTokens: 2500 },
+        }),
+      }
+    );
+    const data = await r.json();
     if (!r.ok) {
-      console.error("API error:", r.status, JSON.stringify(data));
-      const msg =
-        r.status === 429
-          ? "Free limit khatam ho gayi, thodi der baad try karo."
-          : "AI service se error aaya. Dobara try karo.";
+      console.error("API error:", JSON.stringify(data));
+      const msg = r.status === 429 ? "Free limit khatam ho gayi, thodi der baad try karo." : "AI service se error aaya. Dobara try karo.";
       return res.status(502).json({ error: msg });
     }
-
-    const parts =
-      (data.candidates &&
-        data.candidates[0] &&
-        data.candidates[0].content &&
-        data.candidates[0].content.parts) ||
-      [];
+    const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
     const text = parts.map((p) => p.text || "").join("");
-    if (!text) {
-      return res.status(502).json({ error: "Khaali jawab aaya. Question thoda badal ke try karo." });
-    }
-
+    if (!text) return res.status(502).json({ error: "Khaali jawab aaya. Question thoda badal ke try karo." });
     res.json({ answer: text });
   } catch (e) {
-    console.error("Server error:", e);
+    console.error(e);
     res.status(500).json({ error: "Server error. Dobara try karo." });
   }
 });
