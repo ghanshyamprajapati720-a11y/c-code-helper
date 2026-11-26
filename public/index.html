@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C Code Helper</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{--bg:#eef3f8;--ink:#14213d;--mut:#5b6b82;--card:#fff;--line:#cdd8e6;--acc:#1f6f8b;--accT:#fff;--code:#0f1b2d;--codeT:#e6edf7}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c1522;--ink:#e6edf7;--mut:#93a3ba;--card:#14223a;--line:#27385a;--acc:#5fb4d1;--accT:#0c1522;--code:#070d17}}
+:root[data-theme="dark"]{--bg:#0c1522;--ink:#e6edf7;--mut:#93a3ba;--card:#14223a;--line:#27385a;--acc:#5fb4d1;--accT:#0c1522;--code:#070d17}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "IBM Plex Sans",system-ui,sans-serif}
+.wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+aside{border-right:1px solid var(--line);padding:20px 14px;background:var(--card)}
+aside h2{font-size:1rem;margin:0 0 10px}
+#hist{list-style:none;margin:0;padding:0}
+#hist li{margin:0 0 6px}
+#hist button{width:100%;text-align:left;border:1px solid transparent;background:transparent;color:var(--ink);padding:8px 10px;border-radius:8px;font:inherit;font-size:.9rem;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#hist button:hover{border-color:var(--line)}
+.clear{margin-top:10px;background:none;border:0;color:var(--mut);cursor:pointer;font:inherit;font-size:.85rem;padding:0}
+main{padding:28px 22px 70px;max-width:820px;width:100%;margin:0 auto}
+h1{font-size:2rem;line-height:1.2;margin:0 0 6px;font-weight:600}
+.sub{color:var(--mut);margin:0 0 20px}
+textarea{width:100%;min-height:130px;resize:vertical;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font:inherit}
+textarea:focus,button:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}
+select{padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
+.chip{border:1px solid var(--line);background:transparent;color:var(--mut);padding:5px 12px;border-radius:999px;font:inherit;font-size:.85rem;cursor:pointer}
+.go{background:var(--acc);color:var(--accT);border:0;border-radius:10px;padding:12px 24px;font:inherit;font-weight:600;cursor:pointer}
+.go:disabled{opacity:.6;cursor:wait}
+.hint{color:var(--mut);font-size:.82rem}
+#out{margin-top:24px}
+.code{position:relative;background:var(--code);color:var(--codeT);border-radius:10px;margin:14px 0;overflow:hidden}
+.code pre{margin:0;padding:44px 16px 16px;overflow-x:auto;font:14px/1.55 "JetBrains Mono",ui-monospace,Consolas,monospace;tab-size:4}
+.bar{position:absolute;top:8px;right:8px;display:flex;gap:6px}
+.bar button{background:#ffffff1f;color:var(--codeT);border:0;border-radius:6px;padding:4px 10px;font:inherit;font-size:.8rem;cursor:pointer}
+.txt{margin:10px 0;white-space:pre-wrap}
+.err{color:#d64545}
+.spin{color:var(--mut)}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line)}#hist{display:flex;gap:6px;overflow-x:auto}#hist li{flex:0 0 auto;max-width:200px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<aside>
+  <h2>Pichhle questions</h2>
+  <ul id="hist"></ul>
+  <button class="clear" id="clr" type="button">History saaf karo</button>
+</aside>
+<main>
+  <h1>C Code Helper</h1>
+  <p class="sub">C ka koi bhi question likho. Seedha student-style code, sample output aur explanation milega.</p>
+  <textarea id="q" placeholder="Jaise: Write a C program to find the largest of three numbers using if-else."></textarea>
+  <div class="row" id="chips"></div>
+  <div class="row">
+    <select id="mode" aria-label="Style">
+      <option value="student">Student style</option>
+      <option value="exam">Exam format (algorithm + code)</option>
+      <option value="optimized">Optimized code</option>
+    </select>
+    <select id="lang" aria-label="Explanation language">
+      <option value="hinglish">Hinglish</option>
+      <option value="english">English</option>
+      <option value="hindi">हिन्दी</option>
+    </select>
+    <button class="go" id="go" type="button">Code banao</button>
+    <span class="hint">Ctrl + Enter bhi chalega</span>
+  </div>
+  <div id="out" aria-live="polite"></div>
+</main>
+</div>
+<script>
+(function(){
+var $=function(i){return document.getElementById(i)};
+var q=$('q'),go=$('go'),out=$('out'),hist=$('hist');
+var ex=['Prime number check','Reverse a string without strlen','Bubble sort','Matrix multiplication','Linked list insert at end','Fibonacci using recursion'];
+ex.forEach(function(t){var b=document.createElement('button');b.className='chip';b.type='button';b.textContent=t;b.onclick=function(){q.value='Write a C program for: '+t;q.focus()};$('chips').appendChild(b)});
+
+function load(){try{return JSON.parse(localStorage.getItem('cch')||'[]')}catch(e){return[]}}
+function save(a){try{localStorage.setItem('cch',JSON.stringify(a.slice(0,30)))}catch(e){}}
+function drawHist(){
+  hist.textContent='';
+  load().forEach(function(h){
+    var li=document.createElement('li'),b=document.createElement('button');
+    b.type='button';b.textContent=h.q;b.title=h.q;
+    b.onclick=function(){q.value=h.q;render(h.a)};
+    li.appendChild(b);hist.appendChild(li);
+  });
+}
+$('clr').onclick=function(){save([]);drawHist()};
+
+function render(text){
+  out.textContent='';
+  text.split('```').forEach(function(p,i){
+    if(!p.trim())return;
+    if(i%2===1){
+      var code=p.replace(/^[a-zA-Z]*\n/,'').replace(/\n$/,'');
+      var w=document.createElement('div');w.className='code';
+      var pre=document.createElement('pre');pre.textContent=code;
+      var bar=document.createElement('div');bar.className='bar';
+      var c=document.createElement('button');c.type='button';c.textContent='Copy';
+      c.onclick=function(){
+        function ok(){c.textContent='Copied';setTimeout(function(){c.textContent='Copy'},1500)}
+        if(navigator.clipboard)navigator.clipboard.writeText(code).then(ok,function(){})
+      };
+      var d=document.createElement('button');d.type='button';d.textContent='Download .c';
+      d.onclick=function(){
+        var a=document.createElement('a');
+        a.href=URL.createObjectURL(new Blob([code],{type:'text/plain'}));
+        a.download='program.c';a.click();URL.revokeObjectURL(a.href);
+      };
+      bar.appendChild(c);bar.appendChild(d);w.appendChild(pre);w.appendChild(bar);out.appendChild(w);
+    }else{
+      var t=document.createElement('div');t.className='txt';t.textContent=p.trim();out.appendChild(t);
+    }
+  });
+}
+function fail(m){out.textContent='';var e=document.createElement('p');e.className='err';e.textContent=m;out.appendChild(e)}
+
+async function run(){
+  var question=q.value.trim();
+  if(!question){q.focus();return}
+  go.disabled=true;go.textContent='Code ban raha hai…';
+  out.innerHTML='<p class="spin">Soch raha hoon…</p>';
+  try{
+    var r=await fetch('/api/solve',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({question:question,mode:$('mode').value,lang:$('lang').value})});
+    var d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Error');
+    render(d.answer);
+    var h=load().filter(function(x){return x.q!==question});
+    h.unshift({q:question,a:d.answer});save(h);drawHist();
+  }catch(e){fail(e.message||'Kuch gadbad hui. Dobara try karo.')}
+  finally{go.disabled=false;go.textContent='Code banao'}
+}
+go.onclick=run;
+q.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='Enter')run()});
+drawHist();
+})();
+</script>
+</body>
+</html>
